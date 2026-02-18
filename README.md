@@ -37,7 +37,28 @@
 
 ## 🚀 快速开始
 
-### 方式一：直接运行（推荐）
+### 方式零：下载打包版（最简单，无需安装 Python）
+
+前往 [Releases 页面](https://github.com/StrikeNull/bilibili-tools-followers/releases/latest) 下载对应平台的安装包：
+
+#### 🍎 macOS
+1. 下载 `BilibiliTools-macOS-arm64.dmg`
+2. 双击 `.dmg` 文件挂载
+3. 将 `BilibiliTools.app` 拖入「应用程序」文件夹
+4. 双击运行，程序会自动启动服务并打开浏览器
+
+> **首次运行提示"无法验证开发者"？** 在终端执行：
+> ```bash
+> xattr -cr /Applications/BilibiliTools.app
+> ```
+> 然后右键 → 打开。
+
+#### 🪟 Windows
+> 暂无 Windows 打包版，请使用下方「方式一」运行。
+
+---
+
+
 
 **macOS：**
 ```bash
