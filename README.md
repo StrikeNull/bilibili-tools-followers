@@ -28,6 +28,10 @@
 |:------:|:-------:|
 | ![登录页](docs/screenshots/login.png) | ![关注列表](docs/screenshots/followings.png) |
 
+| 数据分析 |
+|:-------:|
+| ![数据分析](docs/screenshots/analysis.png) |
+
 ---
 
 
