@@ -1,0 +1,596 @@
+"""
+Bilibili API 封装
+处理与B站API的所有交互
+"""
+import httpx
+import asyncio
+import time
+import hashlib
+import urllib.parse
+from functools import reduce
+from typing import Optional, List, Dict, Any
+
+class BilibiliLogin:
+    """二维码登录工具"""
+    PASSPORT_URL = "https://passport.bilibili.com"
+
+    @classmethod
+    async def generate_qrcode(cls) -> Dict:
+        """生成登录二维码"""
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        }
+        async with httpx.AsyncClient(headers=headers) as client:
+            resp = await client.get(
+                f"{cls.PASSPORT_URL}/x/passport-login/web/qrcode/generate"
+            )
+            data = resp.json()
+            if data.get("code") != 0:
+                raise Exception(f"Failed to generate QR code: {data.get('message')}")
+            return data.get("data", {})
+
+    @classmethod
+    async def poll_qrcode(cls, qrcode_key: str) -> Dict:
+        """轮询二维码状态"""
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        }
+        async with httpx.AsyncClient(headers=headers) as client:
+            resp = await client.get(
+                f"{cls.PASSPORT_URL}/x/passport-login/web/qrcode/poll",
+                params={"qrcode_key": qrcode_key},
+            )
+            data = resp.json()
+            # 成功时返回 cookies
+            if data.get("code") == 0:
+                result = data.get("data", {})
+                code = result.get("code", -1)
+                # 0: 成功, 86101: 未扫码, 86090: 二维码已确认, 86038: 二维码失效
+                if code == 0:
+                    # 获取 cookie
+                    cookies = resp.cookies
+                    return {
+                        "status": "success",
+                        "url": result.get("url"),
+                        "cookies": {
+                            "SESSDATA": cookies.get("SESSDATA"),
+                            "bili_jct": cookies.get("bili_jct"),
+                        },
+                    }
+                elif code == 86101:
+                    return {"status": "waiting"}
+                elif code == 86090:
+                    return {"status": "scanned"} # 已扫码未确认
+                elif code == 86038:
+                    return {"status": "expired"}
+            return {"status": "error", "message": data.get("message")}
+
+
+class BilibiliAPI:
+    BASE_URL = "https://api.bilibili.com"
+    SPACE_URL = "https://space.bilibili.com"
+
+    def __init__(self, sessdata: str, bili_jct: str):
+        self.sessdata = sessdata
+        self.bili_jct = bili_jct
+        self.cookies = {
+            "SESSDATA": sessdata,
+            "bili_jct": bili_jct,
+        }
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) "
+                          "Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://www.bilibili.com",
+            "Origin": "https://www.bilibili.com",
+        }
+        self._rate_limit_delay = 0.2  # 普通请求间隔(秒)
+        self._enrich_delay = 0.5      # 增强请求间隔(秒)，防风控
+        self._last_request_time = 0
+        self._wbi_keys = None
+        self._wbi_keys_ts = 0
+
+    async def _rate_limit(self, delay: float = None):
+        """简单的请求速率限制"""
+        d = delay or self._rate_limit_delay
+        now = time.time()
+        elapsed = now - self._last_request_time
+        if elapsed < d:
+            await asyncio.sleep(d - elapsed)
+        self._last_request_time = time.time()
+
+    async def _get(self, url: str, params: Optional[Dict] = None,
+                   delay: float = None) -> Dict:
+        """发送GET请求"""
+        await self._rate_limit(delay)
+        async with httpx.AsyncClient(
+            cookies=self.cookies,
+            headers=self.headers,
+            timeout=15.0,
+            follow_redirects=True,
+        ) as client:
+            resp = await client.get(url, params=params)
+            # 检测412风控
+            if resp.status_code == 412:
+                raise Exception("412风控拦截")
+            ct = resp.headers.get("content-type", "")
+            if "text/html" in ct:
+                raise Exception("412风控拦截(返回HTML)")
+            data = resp.json()
+            if data.get("code") != 0:
+                raise Exception(
+                    f"API错误 [{data.get('code')}]: {data.get('message', '未知错误')}"
+                )
+            return data.get("data", {})
+
+    async def _post(self, url: str, data: Optional[Dict] = None) -> Dict:
+        """发送POST请求"""
+        await self._rate_limit()
+        if data is None:
+            data = {}
+        data["csrf"] = self.bili_jct
+        async with httpx.AsyncClient(
+            cookies=self.cookies,
+            headers=self.headers,
+            timeout=15.0,
+            follow_redirects=True,
+        ) as client:
+            resp = await client.post(url, data=data)
+            result = resp.json()
+            if result.get("code") != 0:
+                raise Exception(
+                    f"API错误 [{result.get('code')}]: {result.get('message', '未知错误')}"
+                )
+            return result.get("data", {})
+
+    # ==================== 用户信息 ====================
+
+    async def get_my_info(self) -> Dict:
+        """获取当前登录用户信息"""
+        data = await self._get(f"{self.BASE_URL}/x/web-interface/nav")
+        mid = data.get("mid")
+
+        # 单独获取关注数和粉丝数（nav接口可能返回0）
+        following = 0
+        follower = 0
+        try:
+            stat = await self._get(
+                f"{self.BASE_URL}/x/relation/stat", params={"vmid": mid}
+            )
+            following = stat.get("following", 0)
+            follower = stat.get("follower", 0)
+        except Exception:
+            pass
+
+        return {
+            "mid": mid,
+            "uname": data.get("uname"),
+            "face": data.get("face"),
+            "level": data.get("level_info", {}).get("current_level"),
+            "coins": data.get("money"),
+            "vip_type": data.get("vipType"),
+            "vip_status": data.get("vipStatus"),
+            "following": following,
+            "follower": follower,
+        }
+
+    # ==================== 关注列表 ====================
+
+    async def get_followings_page(
+        self, vmid: int, pn: int = 1, ps: int = 50, order_type: str = ""
+    ) -> Dict:
+        """获取关注列表（单页）"""
+        params = {
+            "vmid": vmid,
+            "pn": pn,
+            "ps": ps,
+            "order_type": order_type,
+        }
+        return await self._get(
+            f"{self.BASE_URL}/x/relation/followings", params=params
+        )
+
+    async def get_all_followings(self, vmid: int) -> List[Dict]:
+        """获取所有关注（遍历所有页面）"""
+        all_followings = []
+        pn = 1
+        ps = 50
+        max_page = 100  # 安全上限，防止无限循环
+
+        while pn <= max_page:
+            try:
+                data = await self.get_followings_page(vmid, pn=pn, ps=ps)
+                page_list = data.get("list", [])
+                if not page_list:
+                    break
+                all_followings.extend(page_list)
+                total = data.get("total", 0)
+                if len(all_followings) >= total or len(page_list) < ps:
+                    break
+                pn += 1
+            except Exception as e:
+                # B站会在第5页之后返回错误码22115，此时切换到分组方式
+                print(f"分页获取在第{pn}页失败: {e}，切换到分组方式")
+                break
+
+        # 如果分页获取不完整，用分组方式补充
+        first_page_data = None
+        try:
+            first_page_data = await self.get_followings_page(vmid, pn=1, ps=1)
+        except Exception:
+            pass
+        expected_total = first_page_data.get("total", 0) if first_page_data else 0
+
+        if expected_total > 0 and len(all_followings) < expected_total:
+            print(f"分页获取了{len(all_followings)}/{expected_total}，用分组方式补充")
+            tag_followings = await self._get_followings_by_tags()
+            existing_mids = {f["mid"] for f in all_followings}
+            for f in tag_followings:
+                if f["mid"] not in existing_mids:
+                    all_followings.append(f)
+
+        return all_followings
+
+    async def _get_followings_by_tags(self) -> List[Dict]:
+        """通过分组方式获取所有关注"""
+        all_users = []
+        try:
+            tags = await self.get_follow_tags()
+            for tag in tags:
+                tagid = tag.get("tagid")
+                pn = 1
+                while True:
+                    try:
+                        users = await self.get_tag_users(tagid, pn=pn, ps=20)
+                        if not users:
+                            break
+                        all_users.extend(users)
+                        if len(users) < 20:
+                            break
+                        pn += 1
+                    except Exception:
+                        break
+        except Exception:
+            pass
+        return all_users
+
+    # ==================== 分组/标签 ====================
+
+    async def get_follow_tags(self) -> List[Dict]:
+        """获取关注分组列表"""
+        return await self._get(f"{self.BASE_URL}/x/relation/tags")
+
+    async def get_tag_users(
+        self, tagid: int, pn: int = 1, ps: int = 20
+    ) -> List[Dict]:
+        """获取分组内的用户"""
+        params = {"tagid": tagid, "pn": pn, "ps": ps}
+        return await self._get(
+            f"{self.BASE_URL}/x/relation/tag", params=params
+        )
+
+    # ==================== 取消关注 ====================
+
+    async def unfollow(self, fid: int) -> Dict:
+        """取消关注"""
+        return await self._post(
+            f"{self.BASE_URL}/x/relation/modify",
+            data={"fid": fid, "act": 2, "re_src": 11},
+        )
+
+    async def batch_unfollow(self, fids: List[int]) -> List[Dict]:
+        """批量取消关注（带延迟保护）"""
+        results = []
+        for fid in fids:
+            try:
+                await self.unfollow(fid)
+                results.append({"mid": fid, "success": True, "message": "成功"})
+            except Exception as e:
+                results.append({"mid": fid, "success": False, "message": str(e)})
+            # 批量操作加大延迟，防风控
+            await asyncio.sleep(1.0)
+        return results
+
+    # ==================== 用户详情 ====================
+
+    async def get_user_card(self, mid: int) -> Dict:
+        """获取用户名片信息（含粉丝数）"""
+        params = {"mid": mid, "photo": "false"}
+        data = await self._get(
+            f"{self.BASE_URL}/x/web-interface/card", params=params
+        )
+        card = data.get("card", {})
+        return {
+            "mid": card.get("mid"),
+            "name": card.get("name"),
+            "face": card.get("face"),
+            "sign": card.get("sign"),
+            "fans": card.get("fans", 0),
+            "attention": card.get("attention", 0),
+            "level": card.get("level_info", {}).get("current_level"),
+            "official": card.get("official", {}),
+            "vip": card.get("vip", {}),
+        }
+
+    # ==================== WBI 签名 ====================
+
+    _MIXIN_KEY_ENC_TAB = [
+        46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,
+        27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13,
+        37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4,
+        22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
+    ]
+
+    def _get_mixin_key(self, raw: str) -> str:
+        return reduce(lambda s, i: s + raw[i], self._MIXIN_KEY_ENC_TAB, "")[:32]
+
+    async def _ensure_wbi_keys(self):
+        """获取或缓存 WBI 签名密钥（每24小时刷新）"""
+        if self._wbi_keys and (time.time() - self._wbi_keys_ts < 86400):
+            return self._wbi_keys
+        data = await self._get(f"{self.BASE_URL}/x/web-interface/nav")
+        wbi_img = data.get("wbi_img", {})
+        img_url = wbi_img.get("img_url", "")
+        sub_url = wbi_img.get("sub_url", "")
+        img_key = img_url.rsplit("/", 1)[-1].split(".")[0] if img_url else ""
+        sub_key = sub_url.rsplit("/", 1)[-1].split(".")[0] if sub_url else ""
+        self._wbi_keys = (img_key, sub_key)
+        self._wbi_keys_ts = time.time()
+        return self._wbi_keys
+
+    async def _wbi_get(self, url: str, params: Dict) -> Dict:
+        """带 WBI 签名的 GET 请求"""
+        img_key, sub_key = await self._ensure_wbi_keys()
+        mixin_key = self._get_mixin_key(img_key + sub_key)
+
+        params = dict(sorted(params.items()))
+        params["wts"] = int(time.time())
+        # 过滤特殊字符
+        query = urllib.parse.urlencode(params)
+        query = "".join(c for c in query if c not in "!'()*")
+        params["w_rid"] = hashlib.md5(
+            (query + mixin_key).encode("utf-8")
+        ).hexdigest()
+
+        return await self._get(url, params=params, delay=self._enrich_delay)
+
+    async def get_user_partition(self, mid: int) -> Dict:
+        """获取用户主要投稿分区及最后一次投稿时间（使用WBI签名）"""
+        try:
+            data = await self._wbi_get(
+                f"{self.BASE_URL}/x/space/wbi/arc/search",
+                params={"mid": mid, "pn": 1, "ps": 1},
+            )
+            vlist = data.get("list", {}).get("vlist", [])
+            tlist = data.get("list", {}).get("tlist", {})
+            
+            result = {
+                "main_partition": "无投稿",
+                "total_videos": data.get("page", {}).get("count", 0),
+                "last_pub_time": 0
+            }
+            
+            if vlist:
+                result["last_pub_time"] = vlist[0].get("created", 0)
+            
+            if tlist:
+                main = max(tlist.values(), key=lambda x: x.get("count", 0))
+                result["main_partition"] = main.get("name", "未知")
+                
+            return result
+        except Exception as e:
+            return {"main_partition": "未知", "total_videos": 0, "last_pub_time": 0}
+
+    async def enrich_single(self, user: Dict) -> Dict:
+        """为单个用户补充粉丝数和分区信息"""
+        mid = user.get("mid")
+        result = {**user}
+
+        # 粉丝数（使用增强延迟）
+        try:
+            await self._rate_limit(self._enrich_delay)
+            card = await self.get_user_card(mid)
+            result["fans"] = card.get("fans", 0)
+        except Exception:
+            result["fans"] = -1
+
+        # 分区
+        try:
+            part = await self.get_user_partition(mid)
+            result["main_partition"] = part.get("main_partition", "未知")
+            result["total_videos"] = part.get("total_videos", 0)
+            result["last_pub_time"] = part.get("last_pub_time", 0)
+        except Exception:
+            result["main_partition"] = "未知"
+            result["total_videos"] = 0
+            result["last_pub_time"] = 0
+
+        return result
+
+    # ==================== 数据分析 ====================
+
+    def analyze_followings(self, followings: List[Dict]) -> Dict:
+        """分析关注列表数据"""
+        total = len(followings)
+        if total == 0:
+            return {"total": 0}
+
+        # 认证分布
+        official_types = {"personal": 0, "org": 0, "none": 0}
+        # 大会员分布
+        vip_types = {"monthly": 0, "yearly": 0, "none": 0}
+        # 互关分析
+        relation_types = {"mutual": 0, "one_way": 0, "special": 0}
+        # 关注时间分布（按月）
+        time_distribution = {}
+        # 关注时间列表
+        follow_times = []
+        # 分区分布（如果有enriched数据）
+        partition_distribution = {}
+        # 粉丝数分布
+        fans_distribution = {
+            "< 1千": 0,
+            "1千~1万": 0,
+            "1万~10万": 0,
+            "10万~100万": 0,
+            "> 100万": 0,
+            "未知": 0,
+        }
+
+        for f in followings:
+            # 粉丝数
+            fans = f.get("fans", -1)
+            if fans >= 0:
+                if fans < 1000:
+                    fans_distribution["< 1千"] += 1
+                elif fans < 10000:
+                    fans_distribution["1千~1万"] += 1
+                elif fans < 100000:
+                    fans_distribution["1万~10万"] += 1
+                elif fans < 1000000:
+                    fans_distribution["10万~100万"] += 1
+                else:
+                    fans_distribution["> 100万"] += 1
+            else:
+                fans_distribution["未知"] += 1
+
+            # 认证
+            ov = f.get("official_verify", {})
+            ov_type = ov.get("type", -1)
+            if ov_type == 0:
+                official_types["personal"] += 1
+            elif ov_type == 1:
+                official_types["org"] += 1
+            else:
+                official_types["none"] += 1
+
+            # 大会员
+            vip = f.get("vip", {})
+            vip_type = vip.get("vipType", 0)
+            if vip_type == 1:
+                vip_types["monthly"] += 1
+            elif vip_type == 2:
+                vip_types["yearly"] += 1
+            else:
+                vip_types["none"] += 1
+
+            # 互关: B站 attribute 是位掩码
+            # 2 = 已关注, 6 = 互相关注 (2|4), 128 = 拉黑
+            attr = f.get("attribute", 0)
+            if attr == 6 or attr == 2 | 4:
+                relation_types["mutual"] += 1
+            else:
+                relation_types["one_way"] += 1
+
+            if f.get("special", 0) == 1:
+                relation_types["special"] += 1
+
+            # 关注时间
+            mtime = f.get("mtime", 0)
+            if mtime > 0:
+                follow_times.append(mtime)
+                import datetime
+                dt = datetime.datetime.fromtimestamp(mtime)
+                month_key = dt.strftime("%Y-%m")
+                time_distribution[month_key] = (
+                    time_distribution.get(month_key, 0) + 1
+                )
+
+            # 分区统计
+            partition = f.get("main_partition")
+            if partition:
+                partition_distribution[partition] = (
+                    partition_distribution.get(partition, 0) + 1
+                )
+
+        # 最近投稿时间分布
+        pub_time_distribution = {
+            "within_1m": 0,
+            "1m_3m": 0,
+            "3m_6m": 0,
+            "6m_1y": 0,
+            "gt_1y": 0,
+            "unknown": 0,
+        }
+        
+        # 计算时间分布
+        now = int(time.time())
+        month = 30 * 86400
+        
+        for f in followings:
+            pub_time = f.get("last_pub_time", 0)
+            if not pub_time or pub_time == 0:
+                pub_time_distribution["unknown"] += 1
+                continue
+                
+            diff = now - pub_time
+            if diff < month:
+                pub_time_distribution["within_1m"] += 1
+            elif diff < 3 * month:
+                pub_time_distribution["1m_3m"] += 1
+            elif diff < 6 * month:
+                pub_time_distribution["3m_6m"] += 1
+            elif diff < 12 * month:
+                pub_time_distribution["6m_1y"] += 1
+            else:
+                pub_time_distribution["gt_1y"] += 1
+
+        return {
+            "total": total,
+            "official_types": official_types,
+            "vip_types": vip_types,
+            "relation_types": relation_types,
+            "time_distribution": time_distribution,
+            "follow_times": follow_times,
+            "partition_distribution": partition_distribution,
+            "pub_time_distribution": pub_time_distribution,
+            "fans_distribution": fans_distribution,
+        }
+
+        # 排序时间分布
+        sorted_time = dict(
+            sorted(time_distribution.items(), key=lambda x: x[0])
+        )
+        # 排序分区分布（按数量降序）
+        sorted_partition = dict(
+            sorted(
+                partition_distribution.items(),
+                key=lambda x: x[1],
+                reverse=True,
+            )
+        )
+
+        # 粉丝数分布（按区间）
+        fans_distribution = {
+            "< 1千": 0,
+            "1千~1万": 0,
+            "1万~10万": 0,
+            "10万~100万": 0,
+            "> 100万": 0,
+            "未知": 0,
+        }
+        for f in followings:
+            fans = f.get("fans", -1)
+            if fans < 0:
+                fans_distribution["未知"] += 1
+            elif fans < 1000:
+                fans_distribution["< 1千"] += 1
+            elif fans < 10000:
+                fans_distribution["1千~1万"] += 1
+            elif fans < 100000:
+                fans_distribution["1万~10万"] += 1
+            elif fans < 1000000:
+                fans_distribution["10万~100万"] += 1
+            else:
+                fans_distribution["> 100万"] += 1
+
+        return {
+            "total": total,
+            "official_types": official_types,
+            "vip_types": vip_types,
+            "relation_types": relation_types,
+            "time_distribution": sorted_time,
+            "partition_distribution": sorted_partition,
+            "fans_distribution": fans_distribution,
+        }
+

@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>B站关注管理工具</title>
+    <meta name="description" content="Bilibili关注列表管理、数据分析、批量取关工具">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+
+<body>
+    <!-- ==================== 登录界面 ==================== -->
+    <div id="login-view" class="login-overlay active">
+        <div class="login-bg-animation">
+            <div class="floating-shape shape-1"></div>
+            <div class="floating-shape shape-2"></div>
+            <div class="floating-shape shape-3"></div>
+        </div>
+        <div class="login-card">
+            <div class="login-logo">
+                <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                    <rect width="48" height="48" rx="12" fill="url(#logo-grad)" />
+                    <path d="M14 18L20 12H28L34 18" stroke="white" stroke-width="2.5" stroke-linecap="round"
+                        stroke-linejoin="round" />
+                    <rect x="12" y="18" width="24" height="18" rx="4" fill="white" fill-opacity="0.95" />
+                    <circle cx="20" cy="27" r="2.5" fill="#FB7299" />
+                    <circle cx="28" cy="27" r="2.5" fill="#FB7299" />
+                    <defs>
+                        <linearGradient id="logo-grad" x1="0" y1="0" x2="48" y2="48">
+                            <stop stop-color="#FB7299" />
+                            <stop offset="1" stop-color="#FC9DB7" />
+                        </linearGradient>
+                    </defs>
+                </svg>
+                <h1>B站关注管理</h1>
+                <p class="login-subtitle">管理你的关注列表 · 分析关注数据</p>
+            </div>
+
+            <div class="login-tabs">
+                <div class="login-tab active" data-tab="qrcode">扫码登录</div>
+                <div class="login-tab" data-tab="cookie">Cookie登录</div>
+            </div>
+
+            <div class="login-content active" id="tab-qrcode">
+                <div class="qrcode-container">
+                    <div id="login-qrcode" class="qrcode-box"></div>
+                    <div class="qrcode-mask" id="qrcode-mask" style="display:none;">
+                        <div class="mask-content">
+                            <span class="mask-icon">✓</span>
+                            <span class="mask-text">扫描成功</span>
+                        </div>
+                    </div>
+                    <div class="qrcode-expire" id="qrcode-expire" style="display:none;">
+                        <div class="mask-content">
+                            <span class="mask-text">二维码已失效</span>
+                            <button class="btn-refresh" id="refresh-qrcode">刷新</button>
+                        </div>
+                    </div>
+                </div>
+                <p class="qrcode-tip">请使用 <span class="highlight">哔哩哔哩手机客户端</span><br>扫码登录</p>
+                <p class="qrcode-status" id="qrcode-status">正在获取二维码...</p>
+            </div>
+
+            <div id="tab-cookie" class="login-content" style="display:none;">
+                <form id="login-form">
+                    <div class="form-group">
+                        <label for="cookie-input">粘贴 Cookie</label>
+                        <textarea id="cookie-input" rows="4" placeholder="从浏览器中复制完整的Cookie字符串粘贴到这里..."
+                            required></textarea>
+                        <span class="form-hint">浏览器 → F12 → Network → 刷新页面 → 点击任意请求 → Headers → Cookie → 复制完整值</span>
+                    </div>
+                    <div class="parsed-fields" id="parsed-fields" style="display:none;">
+                        <div class="parsed-item success" id="parsed-sessdata">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                            <span>SESSDATA: <code id="parsed-sessdata-val">-</code></span>
+                        </div>
+                        <div class="parsed-item" id="parsed-bilijct">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                            <span>bili_jct: <code id="parsed-bilijct-val">-</code></span>
+                        </div>
+                    </div>
+                    <button type="submit" id="login-btn" class="btn btn-primary btn-block" disabled>
+                        <span class="btn-text">连接B站账号</span>
+                        <span class="btn-loading" style="display:none;">
+                            <span class="spinner"></span> 连接中...
+                        </span>
+                    </button>
+                    <p id="login-error" class="error-text"></p>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 主应用界面 ==================== -->
+    <div id="app-view" class="app-container" style="display:none;">
+        <!-- 侧边栏 -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-logo">
+                <svg width="32" height="32" viewBox="0 0 48 48" fill="none">
+                    <rect width="48" height="48" rx="12" fill="url(#logo-grad2)" />
+                    <path d="M14 18L20 12H28L34 18" stroke="white" stroke-width="2.5" stroke-linecap="round"
+                        stroke-linejoin="round" />
+                    <rect x="12" y="18" width="24" height="18" rx="4" fill="white" fill-opacity="0.95" />
+                    <circle cx="20" cy="27" r="2.5" fill="#FB7299" />
+                    <circle cx="28" cy="27" r="2.5" fill="#FB7299" />
+                    <defs>
+                        <linearGradient id="logo-grad2" x1="0" y1="0" x2="48" y2="48">
+                            <stop stop-color="#FB7299" />
+                            <stop offset="1" stop-color="#FC9DB7" />
+                        </linearGradient>
+                    </defs>
+                </svg>
+                <span class="sidebar-title">BiliTools</span>
+            </div>
+
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-item active" data-view="dashboard" id="nav-dashboard">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="7" height="7" />
+                        <rect x="14" y="3" width="7" height="7" />
+                        <rect x="14" y="14" width="7" height="7" />
+                        <rect x="3" y="14" width="7" height="7" />
+                    </svg>
+                    <span>仪表盘</span>
+                </a>
+                <a href="#" class="nav-item" data-view="followlist" id="nav-followlist">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                        <circle cx="9" cy="7" r="4" />
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                    </svg>
+                    <span>关注列表</span>
+                </a>
+                <a href="#" class="nav-item" data-view="analysis" id="nav-analysis">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="20" x2="18" y2="10" />
+                        <line x1="12" y1="20" x2="12" y2="4" />
+                        <line x1="6" y1="20" x2="6" y2="14" />
+                    </svg>
+                    <span>数据分析</span>
+                </a>
+                <a href="#" class="nav-item" data-view="batch" id="nav-batch">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                    </svg>
+                    <span>批量管理</span>
+                </a>
+            </nav>
+
+            <div class="sidebar-user" id="sidebar-user">
+                <img id="sidebar-avatar" src="" alt="" class="sidebar-avatar">
+                <div class="sidebar-user-info">
+                    <span class="sidebar-username" id="sidebar-username"></span>
+                    <span class="sidebar-uid" id="sidebar-uid"></span>
+                </div>
+                <button class="btn-icon" id="logout-btn" title="退出登录">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                        <polyline points="16 17 21 12 16 7" />
+                        <line x1="21" y1="12" x2="9" y2="12" />
+                    </svg>
+                </button>
+            </div>
+        </aside>
+
+        <!-- 主内容区 -->
+        <main class="main-content">
+            <!-- ===== 仪表盘 ===== -->
+            <section id="view-dashboard" class="view active">
+                <div class="view-header">
+                    <h2>仪表盘</h2>
+                    <p class="view-subtitle">账号总览与快速统计</p>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card" id="stat-following">
+                        <div class="stat-icon" style="background: linear-gradient(135deg, #FB7299, #FC9DB7);">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                                <circle cx="9" cy="7" r="4" />
+                                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                            </svg>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="stat-following-val">-</span>
+                            <span class="stat-label">关注</span>
+                        </div>
+                    </div>
+                    <div class="stat-card" id="stat-follower">
+                        <div class="stat-icon" style="background: linear-gradient(135deg, #00D1FF, #0095FF);">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                                <circle cx="12" cy="7" r="4" />
+                            </svg>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="stat-follower-val">-</span>
+                            <span class="stat-label">粉丝</span>
+                        </div>
+                    </div>
+                    <div class="stat-card" id="stat-mutual">
+                        <div class="stat-icon" style="background: linear-gradient(135deg, #7C5CFC, #B06CFC);">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                                <path d="M8 7a4 4 0 1 0 8 0 4 4 0 0 0-8 0Z" />
+                                <path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2" />
+                            </svg>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="stat-mutual-val">-</span>
+                            <span class="stat-label">互关</span>
+                        </div>
+                    </div>
+                    <div class="stat-card" id="stat-level">
+                        <div class="stat-icon" style="background: linear-gradient(135deg, #FFB347, #FF6B6B);">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                                <polygon
+                                    points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                            </svg>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="stat-level-val">-</span>
+                            <span class="stat-label">等级</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="dashboard-charts">
+                    <div class="chart-card">
+                        <h3>认证分布</h3>
+                        <div class="chart-wrapper">
+                            <canvas id="chart-official"></canvas>
+                        </div>
+                    </div>
+                    <div class="chart-card">
+                        <h3>关注关系</h3>
+                        <div class="chart-wrapper">
+                            <canvas id="chart-relation"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ===== 关注列表 ===== -->
+            <section id="view-followlist" class="view">
+                <div class="view-header">
+                    <h2>关注列表</h2>
+                    <p class="view-subtitle">查看与管理所有关注的UP主</p>
+                </div>
+
+                <div class="follow-toolbar">
+                    <div class="search-box">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <circle cx="11" cy="11" r="8" />
+                            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                        </svg>
+                        <input type="text" id="follow-search" placeholder="搜索UP主名称...">
+                    </div>
+                    <div class="toolbar-actions">
+                        <select id="follow-filter" class="select-styled">
+                            <option value="all">全部关注</option>
+                            <option value="mutual">互相关注</option>
+                            <option value="one_way">单向关注</option>
+                            <option value="special">特别关注</option>
+                            <option value="official">已认证</option>
+                            <option value="vip">大会员</option>
+                        </select>
+                        <select id="follow-sort" class="select-styled" style="display:none;">
+                            <option value="default">默认排序</option>
+                            <option value="fans_desc">粉丝数 ↓ 从多到少</option>
+                            <option value="fans_asc">粉丝数 ↑ 从少到多</option>
+                            <option value="pub_desc">最近更新</option>
+                            <option value="pub_asc">最久未更新</option>
+                        </select>
+                        <select id="follow-partition-filter" class="select-styled" style="display:none;">
+                            <option value="all">全部分区</option>
+                        </select>
+                        <select id="follow-fans-filter" class="select-styled" style="display:none;">
+                            <option value="all">全部粉丝数</option>
+                            <option value="lt1k">&lt; 1千</option>
+                            <option value="1k-1w">1千 ~ 1万</option>
+                            <option value="1w-10w">1万 ~ 10万</option>
+                            <option value="10w-100w">10万 ~ 100万</option>
+                            <option value="gt100w">&gt; 100万</option>
+                        </select>
+                        <select id="follow-time-filter" class="select-styled" style="display:none;">
+                            <option value="all">全部更新时间</option>
+                            <option value="1m">1个月内更新</option>
+                            <option value="1m-3m">1~3个月未更新</option>
+                            <option value="3m-6m">3~6个月未更新</option>
+                            <option value="6m-1y">6个月~1年未更新</option>
+                            <option value="gt1y">1年以上未更新</option>
+                        </select>
+                        <button id="load-enriched-btn" class="btn btn-accent" title="从B站重新拉取所有关注的粉丝数和分区数据">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path d="M21 12a9 9 0 11-6.219-8.56" />
+                            </svg>
+                            从B站刷新
+                        </button>
+
+                        <div style="margin-left:auto;display:flex;align-items:center;gap:10px;">
+                            <label class="checkbox-label"
+                                style="font-size: 0.82rem; color:var(--text-secondary); cursor:pointer;">
+                                <input type="checkbox" id="follow-select-all">
+                                <span class="checkmark" style="background:var(--bg-secondary);"></span> 全选
+                            </label>
+                            <button id="follow-batch-refresh" class="btn btn-outline"
+                                style="color:var(--accent-color);border-color:var(--accent-color);padding:6px 12px;font-size:0.8rem;"
+                                disabled>
+                                批量刷新
+                            </button>
+                            <button id="follow-batch-unfollow" class="btn btn-outline"
+                                style="color:var(--color-danger);border-color:var(--color-danger);padding:6px 12px;font-size:0.8rem;"
+                                disabled>
+                                批量取关
+                            </button>
+                        </div>
+                        <button id="refresh-followings" class="btn btn-outline" title="从本地缓存文件重新加载数据">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <polyline points="23 4 23 10 17 10" />
+                                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                            </svg>
+                            本地刷新
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 数据增强进度条 -->
+                <div id="enrich-progress" class="enrich-progress" style="display:none;">
+                    <div class="enrich-progress-inner">
+                        <span class="spinner"></span>
+                        <span id="enrich-progress-text">正在加载详细数据...</span>
+                        <button id="stop-enrich-btn" class="btn-accent"
+                            style="background:var(--color-danger);padding:4px 12px;font-size:0.75rem;margin-left:auto;">停止</button>
+                    </div>
+                    <div class="progress-bar-wrap small">
+                        <div class="progress-bar" id="enrich-bar"></div>
+                    </div>
+                </div>
+
+                <div id="follow-list-container" class="follow-grid">
+                    <div class="loading-state">
+                        <span class="spinner large"></span>
+                        <p>加载关注列表中...</p>
+                    </div>
+                </div>
+
+                <div class="pagination" id="follow-pagination"></div>
+            </section>
+
+            <!-- ===== 数据分析 ===== -->
+            <section id="view-analysis" class="view">
+                <div class="view-header">
+                    <h2>数据分析</h2>
+                    <p class="view-subtitle">深入了解你的关注数据</p>
+                </div>
+
+                <div class="analysis-actions">
+                    <button id="load-analysis" class="btn btn-primary">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <line x1="18" y1="20" x2="18" y2="10" />
+                            <line x1="12" y1="20" x2="12" y2="4" />
+                            <line x1="6" y1="20" x2="6" y2="14" />
+                        </svg>
+                        加载分析数据
+                    </button>
+                    <span id="analysis-status" class="status-text"></span>
+                </div>
+
+                <div id="analysis-content" style="display:none;">
+                    <div class="analysis-summary">
+                        <div class="summary-item">
+                            <span class="summary-value" id="analysis-total">0</span>
+                            <span class="summary-label">总关注数</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-value" id="analysis-special">0</span>
+                            <span class="summary-label">特别关注</span>
+                        </div>
+                        <div class="summary-item accent">
+                            <span class="summary-value" id="analysis-partitions">-</span>
+                            <span class="summary-label">涉及分区</span>
+                        </div>
+                        <div class="summary-item accent">
+                            <span class="summary-value" id="analysis-top-partition">-</span>
+                            <span class="summary-label">最多分区</span>
+                        </div>
+                        <div class="summary-item accent">
+                            <span class="summary-value" id="analysis-max-fans">-</span>
+                            <span class="summary-label">最多粉丝</span>
+                        </div>
+                    </div>
+
+                    <div class="charts-grid">
+                        <div class="chart-card large">
+                            <h3>内容分区分布</h3>
+                            <div class="chart-wrapper wide">
+                                <canvas id="chart-partition"></canvas>
+                            </div>
+                        </div>
+                        <div class="chart-card large" style="grid-column: span 2;">
+                            <h3>最近更新时间分布</h3>
+                            <div class="chart-wrapper wide">
+                                <canvas id="chart-pub-time"></canvas>
+                            </div>
+                        </div>
+                        <div class="chart-card">
+                            <h3>UP主粉丝数分布</h3>
+                            <div class="chart-wrapper">
+                                <canvas id="chart-fans"></canvas>
+                            </div>
+                        </div>
+                        <div class="chart-card">
+                            <h3>认证类型分布</h3>
+                            <div class="chart-wrapper">
+                                <canvas id="chart-official-detail"></canvas>
+                            </div>
+                        </div>
+                        <div class="chart-card large">
+                            <h3>关注时间趋势</h3>
+                            <div class="chart-wrapper wide">
+                                <canvas id="chart-timeline"></canvas>
+                            </div>
+                        </div>
+                        <div class="chart-card">
+                            <h3>大会员分布</h3>
+                            <div class="chart-wrapper">
+                                <canvas id="chart-vip"></canvas>
+                            </div>
+                        </div>
+                        <div class="chart-card">
+                            <h3>关注关系分布</h3>
+                            <div class="chart-wrapper">
+                                <canvas id="chart-relation-detail"></canvas>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </section>
+
+            <!-- ===== 批量管理 ===== -->
+            <section id="view-batch" class="view">
+                <div class="view-header">
+                    <h2>批量管理</h2>
+                    <p class="view-subtitle">按条件筛选并批量取消关注</p>
+                </div>
+
+                <div class="batch-controls">
+                    <div class="batch-filter-card">
+                        <h3>筛选条件</h3>
+                        <div class="filter-options">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="filter-special-follow" value="special_follow">
+                                <span class="checkmark"></span>
+                                特别关注
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="filter-normal-follow" value="normal_follow">
+                                <span class="checkmark"></span>
+                                普通关注
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="filter-missing-enrich" value="missing_enrich">
+                                <span class="checkmark"></span>
+                                详细数据为空
+                            </label>
+                        </div>
+
+                        <div class="filter-divider"></div>
+                        <h4 class="filter-section-title">高级筛选 <span class="tag" id="batch-enrich-tag"
+                                style="font-size:0.65rem;color:var(--text-muted);">需加载详细数据</span></h4>
+                        <div class="filter-options advanced-filters">
+                            <div class="form-group compact">
+                                <label>投稿分区</label>
+                                <select id="batch-partition-filter" class="select-styled">
+                                    <option value="all">全部分区</option>
+                                </select>
+                            </div>
+                            <div class="form-group compact">
+                                <label>粉丝数范围</label>
+                                <select id="batch-fans-filter" class="select-styled">
+                                    <option value="all">全部粉丝数</option>
+                                    <option value="lt1k">
+                                        < 1千</option>
+                                    <option value="1k-1w">1千 ~ 1万</option>
+                                    <option value="1w-10w">1万 ~ 10万</option>
+                                    <option value="10w-100w">10万 ~ 100万</option>
+                                    <option value="gt100w">> 100万</option>
+                                </select>
+                            </div>
+                            <div class="form-group compact">
+                                <label>更新时间</label>
+                                <select id="batch-time-filter" class="select-styled">
+                                    <option value="all">全部更新时间</option>
+                                    <option value="1m">1个月内更新</option>
+                                    <option value="1m-3m">1~3个月未更新</option>
+                                    <option value="3m-6m">3~6个月未更新</option>
+                                    <option value="6m-1y">6个月~1年未更新</option>
+                                    <option value="gt1y">1年以上未更新</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="filter-actions">
+                            <button id="apply-filter" class="btn btn-primary">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+                                </svg>
+                                应用筛选
+                            </button>
+                            <button id="select-all-batch" class="btn btn-outline">全选</button>
+                            <button id="deselect-all-batch" class="btn btn-outline">全不选</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="batch-results" class="batch-results" style="display:none;">
+                    <div class="batch-results-header">
+                        <span id="batch-count">已选择 0 个用户</span>
+                        <button id="batch-refresh-btn" class="btn btn-outline"
+                            style="margin-left:auto;margin-right:10px;" disabled title="从B站重新拉取选中用户的粉丝数和分区数据">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path d="M21 12a9 9 0 11-6.219-8.56" />
+                            </svg>
+                            从B站刷新选中
+                        </button>
+                        <button id="batch-unfollow-btn" class="btn btn-danger" disabled>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <polyline points="3 6 5 6 21 6" />
+                                <path
+                                    d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                            </svg>
+                            批量取消关注
+                        </button>
+                    </div>
+                    <div id="batch-list" class="batch-list"></div>
+                </div>
+
+                <!-- 批量操作进度 -->
+                <div id="batch-progress" class="batch-progress" style="display:none;">
+                    <div class="progress-header">
+                        <h3>正在批量处理...</h3>
+                        <div style="margin-left:auto;display:flex;gap:10px;align-items:center;">
+                            <span id="progress-text">0 / 0</span>
+                            <button id="stop-batch-btn" class="btn btn-sm btn-outline"
+                                style="color:var(--color-danger);border-color:var(--color-danger);">停止</button>
+                        </div>
+                    </div>
+                    <div class="progress-bar-wrap">
+                        <div class="progress-bar" id="progress-bar"></div>
+                    </div>
+                    <div id="progress-log" class="progress-log"></div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- 确认对话框 -->
+    <div id="confirm-modal" class="modal-overlay" style="display:none;">
+        <div class="modal-card">
+            <div class="modal-icon warning">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path
+                        d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                    <line x1="12" y1="9" x2="12" y2="13" />
+                    <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+            </div>
+            <h3 id="confirm-title">确认操作</h3>
+            <p id="confirm-message">确定要执行此操作吗？</p>
+            <div class="modal-actions">
+                <button id="confirm-cancel" class="btn btn-outline">取消</button>
+                <button id="confirm-ok" class="btn btn-danger">确认</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast 通知 -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="/js/api.js?v=2"></script>
+    <script src="/js/app.js?v=2"></script>
+</body>
+
+</html>

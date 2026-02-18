@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+httpx
+pydantic==2.10.6
+qrcode==8.0
+pyinstaller==6.19.0
