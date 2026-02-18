@@ -22,6 +22,15 @@
 
 ---
 
+## 📸 截图预览
+
+| 登录页 | 关注列表 |
+|:------:|:-------:|
+| ![登录页](docs/screenshots/login.png) | ![关注列表](docs/screenshots/followings.png) |
+
+---
+
+
 ## 🚀 快速开始
 
 ### 方式一：直接运行（推荐）
