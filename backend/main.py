@@ -4,6 +4,9 @@ B站关注管理工具 - FastAPI 后端
 import os
 import json
 import asyncio
+import time
+import signal
+import threading
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
@@ -543,6 +546,19 @@ async def get_enriched_followings():
             "total": len(_enriched_followings),
         },
     }
+
+
+@app.post("/api/system/shutdown")
+async def shutdown_system():
+    """关闭服务器"""
+    def _shutdown():
+        try:
+            time.sleep(1)
+            os.kill(os.getpid(), signal.SIGINT)
+        except Exception:
+            os._exit(0)
+    threading.Thread(target=_shutdown).start()
+    return {"code": 0, "message": "服务正在关闭"}
 
 
 # ==================== 静态文件服务 ====================

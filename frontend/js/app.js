@@ -1758,6 +1758,50 @@
             showToast('已退出登录', 'info');
         });
 
+        // 关闭程序
+        const shutdownBtn = $('#shutdown-btn');
+        if (shutdownBtn) {
+            shutdownBtn.addEventListener('click', async () => {
+                if (confirm('确定要关闭程序吗？服务将停止。')) {
+                    try {
+                        // 发送关闭请求（不等待响应，因为服务器可能会立即关闭导致网络错误）
+                        fetch('/api/system/shutdown', { method: 'POST' }).catch(() => { });
+
+                        // 显示关闭界面
+                        const mask = document.createElement('div');
+                        mask.style.position = 'fixed';
+                        mask.style.top = '0';
+                        mask.style.left = '0';
+                        mask.style.width = '100%';
+                        mask.style.height = '100%';
+                        mask.style.background = 'rgba(12, 12, 29, 0.95)';
+                        mask.style.color = '#e8e8ef';
+                        mask.style.display = 'flex';
+                        mask.style.flexDirection = 'column';
+                        mask.style.justifyContent = 'center';
+                        mask.style.alignItems = 'center';
+                        mask.style.zIndex = '9999';
+                        mask.style.fontFamily = 'Inter, sans-serif';
+                        mask.innerHTML = `
+                            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#FF5252" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 24px;">
+                                <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path>
+                                <line x1="12" y1="2" x2="12" y2="12"></line>
+                            </svg>
+                            <h1 style="font-size: 24px; margin-bottom: 8px;">服务已关闭</h1>
+                            <p style="color: #8b8ba0;">您可以安全地关闭此窗口了</p>
+                        `;
+                        document.body.appendChild(mask);
+
+                        // 尝试关闭窗口
+                        setTimeout(() => window.close(), 1000);
+                    } catch (e) {
+                        console.error(e);
+                    }
+                }
+            });
+        }
+
+
         // 搜索
         $('#follow-search').addEventListener('input', debounce((e) => {
             state.searchQuery = e.target.value.trim();
