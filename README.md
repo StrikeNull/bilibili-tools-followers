@@ -37,7 +37,7 @@
 
 ## 🚀 快速开始
 
-### 方式零：下载打包版（最简单，无需安装 Python）
+### 方式一：下载打包版（最简单，无需安装 Python）
 
 前往 [Releases 页面](https://github.com/StrikeNull/bilibili-tools-followers/releases/latest) 下载对应平台的安装包：
 
